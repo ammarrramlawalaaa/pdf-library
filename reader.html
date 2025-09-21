@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reader</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body{margin:0;font-family:Helvetica,Arial,sans-serif}
+    .bar{position:fixed;top:0;left:0;right:0;background:#f6f6f6;border-bottom:1px solid #ddd;padding:8px}
+    .bar input,.bar button, .bar select{font-size:14px;margin-right:6px}
+    .wrap{margin-top:52px}
+    .pdf{width:100%;height:70vh;border:0}
+    .panel{padding:10px}
+    .notes{border-top:1px solid #eee;margin-top:8px;padding-top:8px}
+    .note{border:1px solid #ddd;padding:8px;margin:6px 0;background:#fff}
+    .muted{color:#666;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <button id="backBtn">◀ Library</button>
+    <span id="title" class="muted"></span>
+    <select id="pageJump">
+      <option value="">Go to page…</option>
+      <!-- we fill a simple 1..200 list (safe on iPad); change if you want more -->
+    </select>
+    <button id="bookmarkBtn">★ Bookmark page</button>
+  </div>
+
+  <div class="wrap">
+    <iframe id="viewer" class="pdf"></iframe>
+
+    <div class="panel">
+      <h3>Add a note for this page</h3>
+      <div class="muted">Notes are saved on this device (offline) and tied to the page number.</div>
+      <textarea id="noteInput" rows="4" style="width:100%;font-size:14px"></textarea><br>
+      <button id="saveNote">Save note</button>
+
+      <div class="notes">
+        <h3>Notes & Bookmarks</h3>
+        <div id="notesList"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ---- helpers (ES5 for old Safari) ----
+function qs(k) {
+  var m = location.search.match(new RegExp('[?&]'+k+'=([^&]+)'));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function pageFromHash(h){ var m = String(h||'').match(/page=(\d+)/); return m?parseInt(m[1],10):1; }
+function setHashPage(n){ if(n>0){ location.hash = 'page='+n; loadView(); }}
+
+// ---- state keys ----
+var pdfUrl = qs('pdf');
+var STORAGE_KEY = 'notes:'+pdfUrl;   // JSON: { notes: [{page, text, ts}], bookmarks:[page,...] }
+
+function loadState(){
+  try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)||'{"notes":[],"bookmarks":[]}'); }
+  catch(e){ return {"notes":[],"bookmarks":[]}; }
+}
+function saveState(s){ localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
+
+// ---- UI ----
+var viewer = document.getElementById('viewer');
+var noteInput = document.getElementById('noteInput');
+var notesList = document.getElementById('notesList');
+var pageJump = document.getElementById('pageJump');
+var titleSpan = document.getElementById('title');
+
+// fill a simple 1..200 selector (change if you need more)
+;(function(){
+  var i; for(i=1;i<=200;i++){ var o=document.createElement('option'); o.value=i; o.text='Page '+i; pageJump.appendChild(o); }
+})();
+
+function loadView(){
+  var p = pageFromHash(location.hash) || 1;
+  // Safari's native PDF viewer respects #page=
+  viewer.src = pdfUrl + '#page=' + p;
+  titleSpan.innerHTML = ' &nbsp; ' + (pdfUrl.split('/').pop());
+  renderNotes();
+}
+function currentPage(){ return pageFromHash(location.hash) || 1; }
+
+function renderNotes(){
+  var s = loadState();
+  var p = currentPage();
+  var html = '';
+
+  // current page note box prefill (last note on this page if any)
+  var last = null;
+  for(var i=s.notes.length-1;i>=0;i--){ if(s.notes[i].page===p){ last = s.notes[i]; break; } }
+  noteInput.value = last ? s.notes[i].text : '';
+
+  // bookmarks first
+  if(s.bookmarks.length){
+    html += '<div class="muted">Bookmarks: ';
+    for(var j=0;j<s.bookmarks.length;j++){
+      var pg = s.bookmarks[j];
+      html += '<a href="javascript:setHashPage('+pg+')">p.'+pg+'</a>'+ (j<s.bookmarks.length-1?', ':'');
+    }
+    html += '</div>';
+  }
+
+  // list all notes grouped by page
+  var byPage = {};
+  for(var k=0;k<s.notes.length;k++){
+    var n = s.notes[k];
+    if(!byPage[n.page]) byPage[n.page] = [];
+    byPage[n.page].push(n);
+  }
+  for(var pg in byPage){
+    html += '<div class="note"><b>Page '+pg+'</b><br>';
+    var list = byPage[pg];
+    for(var t=0;t<list.length;t++){
+      html += '<div style="margin:6px 0">'+ escapeHtml(list[t].text) +'</div>';
+    }
+    html += '<div class="muted"><a href="javascript:setHashPage('+pg+')">open</a></div></div>';
+  }
+  notesList.innerHTML = html || '<div class="muted">No notes yet.</div>';
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; });
+}
+
+// ---- events ----
+document.getElementById('backBtn').onclick = function(){ location.href = 'index.html'; };
+document.getElementById('saveNote').onclick = function(){
+  var s = loadState();
+  var txt = noteInput.value || '';
+  var p = currentPage();
+  s.notes.push({page:p, text:txt, ts:Date.now()});
+  saveState(s);
+  renderNotes();
+};
+document.getElementById('bookmarkBtn').onclick = function(){
+  var s = loadState();
+  var p = currentPage();
+  if(s.bookmarks.indexOf(p)===-1){ s.bookmarks.push(p); s.bookmarks.sort(function(a,b){return a-b;}); saveState(s); renderNotes(); }
+};
+pageJump.onchange = function(){ if(this.value){ setHashPage(parseInt(this.value,10)); } };
+window.onhashchange = loadView;
+
+// ---- boot ----
+if(!pdfUrl){ document.body.innerHTML = '<div style="padding:16px;font-family:Helvetica,Arial">No PDF URL. Open this page as <code>reader.html?pdf=FULL_PDF_LINK</code>.</div>'; }
+else{ loadView(); }
+</script>
+</body>
+</html>
